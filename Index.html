@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Skate Pro: Infinite</title>
+    <!-- Configurações PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#00cfff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    
+    <style>
+        body { margin: 0; background: #111; color: #fff; font-family: sans-serif; overflow: hidden; touch-action: none; user-select: none; }
+        canvas { display: block; margin: 0 auto; background: #222; }
+        #topBar { position: absolute; top: 0; width: 100%; height: 50px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-around; align-items: center; z-index: 1000; font-size: 14px; border-bottom: 1px solid #444; pointer-events: none; }
+        #activePwrUi { position: absolute; top: 55px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 5px; z-index: 900; pointer-events: none; }
+        .pwr-badge { background: rgba(0, 0, 0, 0.7); border: 1px solid #00cfff; padding: 4px 12px; border-radius: 20px; font-size: 11px; color: #00cfff; font-weight: bold; }
+        .game-btn { position: absolute; z-index: 2000; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; pointer-events: auto; box-shadow: 0 6px #000; touch-action: none; }
+        .game-btn:active { transform: scale(0.98) translateY(3px); box-shadow: 0 2px #000; }
+        #jumpBtn { bottom: 30px; left: 50%; transform: translateX(-50%); width: 280px; height: 80px; background: #00cfff; color: #000; font-size: 22px; }
+        #shopBtn { bottom: 120px; left: 50%; transform: translateX(-50%); width: 200px; height: 50px; background: #ffcc00; color: #000; font-size: 16px; }
+        #shopModal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #1a1a1a; border: 3px solid #ffcc00; padding: 20px; border-radius: 20px; z-index: 3000; width: 85%; max-width: 320px; pointer-events: auto; }
+        .tabs { display: flex; gap: 5px; margin-bottom: 15px; }
+        .tab { flex: 1; padding: 10px; background: #333; color: #fff; border: none; border-radius: 10px; font-size: 11px; }
+        .tab.active { background: #ffcc00; color: #000; }
+        .item-row { display: flex; align-items: center; justify-content: space-between; background: #222; margin: 5px 0; padding: 10px; border-radius: 10px; border: 1px solid #333; }
+        .btn-buy, .btn-use { background: #00ff88; color: #000; padding: 8px 15px; border-radius: 6px; border: none; font-weight: bold; font-size: 11px; }
+        .btn-use { background: #00cfff; }
+        .close-shop { background: #ff4444; color: #fff; width: 100%; padding: 12px; border: none; border-radius: 10px; margin-top: 10px; font-weight: bold; }
+        .stat-val { color: #00ff88; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="topBar">
+        <div>M: <span id="distText" class="stat-val">0</span></div>
+        <div>💰 <span id="coinText" class="stat-val">0</span></div>
+        <div>🏆 <span id="recText" class="stat-val">0</span></div>
+    </div>
+    <div id="activePwrUi"></div>
+    <button id="shopBtn" class="game-btn">🛒 LOJA E UPGRADES</button>
+    <button id="jumpBtn" class="game-btn">▶ JOGAR</button>
+
+    <div id="shopModal">
+        <h3 style="margin-top:0">SKATE SHOP</h3>
+        <div class="tabs">
+            <button class="tab active" id="tabChar" onclick="setTab('char')">ROUPA</button>
+            <button class="tab" id="tabBoard" onclick="setTab('board')">SKATE</button>
+            <button class="tab" id="tabUpg" onclick="setTab('upg')">MELHORIAS</button>
+        </div>
+        <div id="shopList" style="max-height: 250px; overflow-y: auto;"></div>
+        <button class="close-shop" onclick="closeShop()">FECHAR</button>
+    </div>
+
+    <canvas id="game"></canvas>
+
+    <script>
+        const canvas = document.getElementById("game");
+        const ctx = canvas.getContext("2d");
+        const distText = document.getElementById("distText");
+        const coinText = document.getElementById("coinText");
+        const recText = document.getElementById("recText");
+        const pwrUi = document.getElementById("activePwrUi");
+        canvas.width = 360; canvas.height = 640;
+
+        const MAX_UPG = 5;
+        let coins = Number(localStorage.getItem("skCoins")) || 0;
+        let record = Number(localStorage.getItem("skRec")) || 0;
+        let charCol = localStorage.getItem("skChar") || "#00cfff";
+        let boardCol = localStorage.getItem("skBoard") || "#555555";
+        let unlChar = JSON.parse(localStorage.getItem("skUnlC")) || ["#00cfff"];
+        let unlBoard = JSON.parse(localStorage.getItem("skUnlB")) || ["#555555"];
+        let upg = JSON.parse(localStorage.getItem("skUpg")) || { shield: 1, magnet: 1, slow: 1, turbo: 1 };
+
+        function save() {
+            localStorage.setItem("skCoins", coins); localStorage.setItem("skRec", record);
+            localStorage.setItem("skChar", charCol); localStorage.setItem("skBoard", boardCol);
+            localStorage.setItem("skUnlC", JSON.stringify(unlChar)); localStorage.setItem("skUnlB", JSON.stringify(unlBoard));
+            localStorage.setItem("skUpg", JSON.stringify(upg));
+        }
+
+        let playing = false, gameOver = false, dist = 0, currentTab = 'char', roadOff = 0, startSpeed = 3.5;
+        let player = { x: 180, y: 520, z: 0, v: 0, jumping: false, flip: 0, shield: 0, magnet: 0, slow: 0, turbo: 0 };
+        let targetX = 180, obs = [], items = [], rivals = [], scenery = [];
+        const colors = ["#00cfff", "#ff00ff", "#00ff88", "#ffcc00", "#ff4444", "#ffffff", "#ffa500", "#888"];
+
+        function onAction(e) {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            if (!playing) startGame();
+            else if (!player.jumping) { player.jumping = true; player.v = 6.5; player.flip = 0; }
+        }
+        document.getElementById("jumpBtn").addEventListener("touchstart", onAction, { passive: false });
+        document.getElementById("jumpBtn").addEventListener("mousedown", onAction);
+        document.getElementById("shopBtn").addEventListener("touchstart", (e) => { e.preventDefault(); if(!playing) openShop(); }, { passive: false });
+        document.getElementById("shopBtn").addEventListener("mousedown", () => { if(!playing) openShop(); });
+        window.addEventListener("pointermove", (e) => { if (!playing) return; const rect = canvas.getBoundingClientRect(); targetX = (e.clientX - rect.left) * (360 / rect.width); });
+
+        function openShop() { document.getElementById("shopModal").style.display = "block"; renderShop(); }
+        function closeShop() { document.getElementById("shopModal").style.display = "none"; }
+        function setTab(t) { currentTab = t; ['tabChar','tabBoard','tabUpg'].forEach(id => document.getElementById(id).classList.remove('active')); document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.add('active'); renderShop(); }
+        function renderShop() {
+            const list = document.getElementById("shopList"); list.innerHTML = "";
+            if (currentTab === 'upg') {
+                const names = { shield: "🛡️ CAPACETE", magnet: "🧲 IMÃ", slow: "🧪 ENERGÉTICO", turbo: "🔥 TURBO" };
+                for (let k in upg) {
+                    let cost = upg[k] * 50;
+                    list.innerHTML += `<div class="item-row"><div>${names[k]}<br><small>Nv. ${upg[k]}</small></div>${upg[k] < MAX_UPG ? `<button class="btn-buy" onclick="buyUpg('${k}', ${cost})">${cost} 💰</button>` : `<span style="color:#666;font-size:11px">MAX</span>`}</div>`;
+                }
+            } else {
+                const isC = currentTab === 'char', unl = isC ? unlChar : unlBoard, cur = isC ? charCol : boardCol;
+                colors.forEach(c => {
+                    const owned = unl.includes(c);
+                    list.innerHTML += `<div class="item-row"><div style="width:25px;height:25px;background:${c};border:2px solid #fff"></div>${cur === c ? '<b>EQUIP</b>' : owned ? `<button class="btn-use" onclick="equip('${c}')">USAR</button>` : `<button class="btn-buy" onclick="buySkin('${c}')">30 💰</button>`}</div>`;
+                });
+            }
+            coinText.innerText = coins;
+        }
+        window.buySkin = (c) => { if (coins >= 30) { coins -= 30; if (currentTab === 'char') unlChar.push(c); else unlBoard.push(c); save(); renderShop(); } };
+        window.equip = (c) => { if (currentTab === 'char') charCol = c; else boardCol = c; save(); renderShop(); };
+        window.buyUpg = (k, c) => { if (coins >= c && upg[k] < MAX_UPG) { coins -= c; upg[k]++; save(); renderShop(); } };
+
+        function startGame() { playing = true; gameOver = false; dist = 0; obs = []; items = []; rivals = []; scenery = []; player.shield = 0; player.magnet = 0; player.slow = 0; player.turbo = 0; document.getElementById("jumpBtn").innerText = "⬆ PULAR"; document.getElementById("shopBtn").style.display = "none"; }
+        function darken(hex) { let r = parseInt(hex.slice(1,3), 16), g = parseInt(hex.slice(3,5), 16), b = parseInt(hex.slice(5,7), 16); return `rgb(${r*0.3}, ${g*0.3}, ${b*0.3})`; }
+
+        function drawSkater(x, y, z, pC, bC, tilt) {
+            ctx.save(); ctx.translate(x, y);
+            let s = (1 + z/100) * (player.turbo > 0 ? 1.3 : 1); ctx.scale(s, s);
+            ctx.fillStyle = "rgba(0,0,0,0.2)"; ctx.beginPath(); ctx.ellipse(0, 8+z, 15, 25, 0, 0, Math.PI*2); ctx.fill();
+            if (player.shield > 0) { ctx.strokeStyle = "#00cfff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0,0,35,0,Math.PI*2); ctx.stroke(); }
+            ctx.save(); ctx.rotate(tilt);
+            let boardW = 1, currentBC = bC;
+            if (player.jumping) { boardW = Math.cos(player.flip); if (boardW < 0) currentBC = darken(bC); player.flip += 0.22; }
+            ctx.scale(Math.abs(boardW), 1); ctx.fillStyle = currentBC; ctx.beginPath(); ctx.roundRect(-12, -30, 24, 60, 8); ctx.fill(); ctx.restore();
+            ctx.rotate(tilt); ctx.fillStyle = pC; ctx.beginPath(); ctx.ellipse(0, 0, 16, 11, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#ffdbac"; ctx.beginPath(); ctx.arc(0, -2, 8, 0, Math.PI*2); ctx.fill(); ctx.restore();
+        }
+
+        function loop() {
+            ctx.clearRect(0, 0, 360, 640);
+            let difficulty = (dist / 150) * 0.1;
+            let baseSpd = startSpeed + difficulty;
+            let curSpeed = player.slow > 0 ? baseSpd * 0.5 : (player.turbo > 0 ? baseSpd * 1.8 : baseSpd);
+            ctx.fillStyle = "#1a3d1a"; ctx.fillRect(0, 0, 360, 640);
+            ctx.fillStyle = "#333"; ctx.fillRect(50, 0, 260, 640);
+            ctx.strokeStyle = "#fff"; ctx.setLineDash([30,30]); ctx.lineDashOffset = -roadOff;
+            ctx.beginPath(); ctx.moveTo(180, 0); ctx.lineTo(180, 640); ctx.stroke();
+            if (!playing) { if (gameOver) { ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0,0,360, 640); ctx.fillStyle = "#fff"; ctx.font = "bold 30px Arial"; ctx.textAlign="center"; ctx.fillText("BATEU!", 180, 300); } requestAnimationFrame(loop); return; }
+            let pwrHtml = "";
+            if (player.shield > 0) pwrHtml += `<div class="pwr-badge">🛡️ CAPACETE (${player.shield})</div>`;
+            if (player.magnet > 0) { player.magnet--; pwrHtml += `<div class="pwr-badge" style="color:#ff00ff; border-color:#ff00ff">🧲 IMÃ (${Math.ceil(player.magnet/60)}s)</div>`; }
+            if (player.slow > 0) { player.slow--; pwrHtml += `<div class="pwr-badge" style="color:#00ff88; border-color:#00ff88">🧪 ENERGÉTICO (${Math.ceil(player.slow/60)}s)</div>`; }
+            if (player.turbo > 0) { player.turbo--; pwrHtml += `<div class="pwr-badge" style="color:#ffaa00; border-color:#ffaa00">🔥 TURBO (${Math.ceil(player.turbo/60)}s)</div>`; }
+            pwrUi.innerHTML = pwrHtml;
+            if (player.jumping) { player.z += player.v; player.v -= 0.45; if (player.z <= 0) { player.z = 0; player.jumping = false; } }
+            player.x += (targetX - player.x) * 0.15; player.x = Math.max(75, Math.min(285, player.x));
+            dist++; roadOff += curSpeed;
+            if (Math.random() < 0.04) scenery.push({ x: Math.random()>0.5?20:340, y: -50, type: Math.random()>0.5?'tree':'box' });
+            if (Math.random() < 0.02 + (difficulty * 0.002)) obs.push({ x: Math.random()*160+100, y: -50, t: Math.random()>0.7?'s':'h' });
+            if (Math.random() < 0.015) { let r = Math.random(), t = 'c'; if (r < 0.03) t = 'shield'; else if (r < 0.06) t = 'magnet'; else if (r < 0.08) t = 'slow'; else if (r < 0.10) t = 'turbo'; items.push({ x: Math.random()*160+100, y: -50, t }); }
+            if (dist > 0 && dist % 600 === 0) rivals.push({ x: Math.random()*200+80, y: -60 });
+            scenery.forEach((s, i) => { s.y += curSpeed; ctx.fillStyle = s.type==='tree'?"#2d5a27":"#555"; if(s.type==='tree'){ctx.beginPath();ctx.arc(s.x,s.y,10,0,Math.PI*2);ctx.fill();}else{ctx.fillRect(s.x-8,s.y,16,16);} if(s.y>700) scenery.splice(i,1); });
+            obs.forEach((o, i) => { o.y += curSpeed; ctx.fillStyle = o.t==='h'?'#111':'#888'; if(o.t==='h'){ ctx.beginPath();ctx.arc(o.x,o.y,22,0,Math.PI*2);ctx.fill(); } else { ctx.fillRect(o.x-18,o.y-12,36,24); } if (Math.sqrt((o.x-player.x)**2+(o.y-player.y)**2) < 32) { if (o.t === 'h' && player.z > 8) return; if (player.turbo > 0 || player.shield > 0) { if(player.turbo==0)player.shield--; obs.splice(i, 1); return; } playing = false; gameOver = true; save(); document.getElementById("jumpBtn").innerText = "▶ RECOMEÇAR"; document.getElementById("shopBtn").style.display = "block"; } });
+            items.forEach((it, i) => { it.y += curSpeed; if (player.magnet > 0 && it.t === 'c') { it.x += (player.x - it.x)*0.22; it.y += (player.y - it.y)*0.22; } const cs = { c: "#ffcc00", shield: "#00cfff", magnet: "#ff00ff", slow: "#00ff88", turbo: "#ffaa00" }; ctx.fillStyle = cs[it.t]; ctx.beginPath(); ctx.arc(it.x, it.y, 11, 0, Math.PI*2); ctx.fill(); if (Math.sqrt((it.x-player.x)**2+(it.y-player.y)**2) < 32) { if (it.t === 'c') coins++; else if (it.t === 'shield') player.shield = upg.shield; else if (it.t === 'magnet') player.magnet = upg.magnet * 300; else if (it.t === 'slow') player.slow = upg.slow * 300; else if (it.t === 'turbo') player.turbo = upg.turbo * 200; items.splice(i, 1); save(); } });
+            rivals.forEach((r, i) => { let rSpd = curSpeed + 0.6 + (difficulty * 0.4); r.y += rSpd; let homing = 0.02 + (dist / 1000) * 0.008; r.x += (player.x - r.x) * Math.min(homing, 0.12); drawSkater(r.x, r.y, 0, "#ff3333", "#222", 0); if (Math.sqrt((r.x-player.x)**2+(r.y-player.y)**2) < 35) { if (player.turbo > 0 || player.shield > 0) { if(player.turbo==0)player.shield--; rivals.splice(i, 1); return; } playing = false; gameOver = true; save(); document.getElementById("jumpBtn").innerText = "▶ RECOMEÇAR"; document.getElementById("shopBtn").style.display = "block"; } if (r.y > 700) rivals.splice(i,1); });
+            drawSkater(player.x, player.y, player.z, charCol, boardCol, (targetX - player.x) * 0.02);
+            distText.innerText = Math.floor(dist); coinText.innerText = coins; recText.innerText = record > dist ? Math.floor(record) : Math.floor(dist);
+            requestAnimationFrame(loop);
+        }
+        loop();
+
+        // Registro do Service Worker para PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').then(() => console.log("PWA Registrado!"));
+        }
+    </script>
+</body>
+</html>
